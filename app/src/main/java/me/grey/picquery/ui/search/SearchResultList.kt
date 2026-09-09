@@ -2,6 +2,7 @@ package me.grey.picquery.ui.search
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -12,12 +13,18 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ImageSearch
 import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.ElevatedButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,7 +42,6 @@ import me.grey.picquery.data.model.Photo
 import me.grey.picquery.ui.common.CentralLoadingProgressBar
 import java.io.File
 
-
 @OptIn(ExperimentalFoundationApi::class, ExperimentalGlideComposeApi::class)
 @Composable
 fun SearchResultGrid(
@@ -43,8 +49,8 @@ fun SearchResultGrid(
     state: SearchState,
     resultMap: Map<Long, Double>,
     onClickPhoto: (Photo, Int) -> Unit,
+    onSearchSimilar: (Photo) -> Unit,
 ) {
-
     when (state) {
         SearchState.NO_INDEX -> UnReadyText()
         SearchState.LOADING -> CentralLoadingProgressBar()
@@ -59,13 +65,12 @@ fun SearchResultGrid(
                     columns = GridCells.Adaptive(100.dp),
                     content = {
                         val padding = Modifier.padding(3.dp)
-
-
                         item(span = { GridItemSpan(3) }) {
                             Box(padding) {
                                 PhotoResultRecommend(
                                     photo = resultList[0],
                                     onItemClick = { onClickPhoto(resultList[0], 0) },
+                                    onSearchSimilar = onSearchSimilar,
                                 )
                             }
                         }
@@ -84,6 +89,7 @@ fun SearchResultGrid(
                                             Log.e("SearchResultGrid", "click: $index")
                                             onClickPhoto(resultList[index + 1], index + 1)
                                         },
+                                        onSearchSimilar = onSearchSimilar,
                                     )
                                 }
                             }
@@ -92,10 +98,8 @@ fun SearchResultGrid(
                 )
             }
         }
-
     }
 }
-
 
 @Composable
 private fun UnReadyText() {
@@ -138,22 +142,48 @@ private fun NoResultText() {
 @ExperimentalFoundationApi
 @ExperimentalGlideComposeApi
 @Composable
-private fun PhotoResultRecommend(photo: Photo, onItemClick: (photo: Photo) -> Unit) {
+private fun PhotoResultRecommend(
+    photo: Photo, 
+    onItemClick: (photo: Photo) -> Unit,
+    onSearchSimilar: (photo: Photo) -> Unit
+) {
     val interactionSource = remember { MutableInteractionSource() }
-    GlideImage(
+    Box(
         modifier = Modifier
             .aspectRatio(1.3f)
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .combinedClickable(
-                interactionSource = interactionSource,
-                indication = rememberRipple(),
-                onClick = { onItemClick(photo) }
-            ),
-        model = File(photo.path),
-        contentDescription = photo.label,
-        contentScale = ContentScale.Crop,
-    )
+    ) {
+        GlideImage(
+            modifier = Modifier
+                .fillMaxSize()
+                .combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = rememberRipple(),
+                    onClick = { onItemClick(photo) }
+                ),
+            model = File(photo.path),
+            contentDescription = photo.label,
+            contentScale = ContentScale.Crop,
+        )
+        
+        // Search Similar Button
+        IconButton(
+            onClick = { onSearchSimilar(photo) },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(8.dp)
+                .size(36.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), CircleShape)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.ImageSearch,
+                contentDescription = "Search Similar",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
 }
 
 @ExperimentalFoundationApi
@@ -163,6 +193,7 @@ fun PhotoResultItem(
     photo: Photo,
     similarity: Float,
     onItemClick: (photo: Photo) -> Unit,
+    onSearchSimilar: (photo: Photo) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val searchResult = remember { SearchResult(similarity) }
@@ -177,16 +208,31 @@ fun PhotoResultItem(
                         .clip(RoundedCornerShape(8.dp)),
                     contentScale = ContentScale.Crop
                 )
-
                 // ConfidenceTag positioned at the top-right corner
                 ConfidenceTag(
-                    confidenceLevel =searchResult.confidenceLevel,
+                    confidenceLevel = searchResult.confidenceLevel,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
                 )
+                
+                // Search Similar Button
+                IconButton(
+                    onClick = { onSearchSimilar(photo) },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .size(32.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ImageSearch,
+                        contentDescription = "Search Similar",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
-
             // Optional: Similarity score text
             Text(
                 text = "Similarity: ${String.format("%.2f", searchResult.similarityScore)}",

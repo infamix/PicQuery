@@ -24,17 +24,16 @@ fun SearchScreen(
     searchViewModel: SearchViewModel = koinViewModel()
 ) {
     Log.d("SearchScreen", "initialQuery: $initialQuery")
-    
     val resultList by searchViewModel.resultList.collectAsState()
     val searchState by searchViewModel.searchState.collectAsState()
     val resultMap by searchViewModel.resultMap.collectAsState()
     val initialQueryDone = remember { mutableStateOf(false) }
-
+    
     LaunchedEffect(Unit) {
         searchViewModel.onQueryChange(initialQuery)
     }
+    
     val queryText by searchViewModel.searchText.collectAsState()
-
     LaunchedEffect(queryText) {
         if (!initialQueryDone.value && queryText.isNotEmpty()) {
             if (queryText.startsWith("content")) {
@@ -46,7 +45,7 @@ fun SearchScreen(
             initialQueryDone.value = true
         }
     }
-
+    
     Surface {
         Column {
             SearchInput(
@@ -57,15 +56,16 @@ fun SearchScreen(
                 onQueryChange = { searchViewModel.onQueryChange(it) },
                 showBackButton = searchState == SearchState.FINISHED,
             )
-
             SearchResultGrid(
                 resultList = resultList,
                 state = searchState,
                 resultMap = resultMap,
-                onClickPhoto = onClickPhoto
+                onClickPhoto = onClickPhoto,
+                onSearchSimilar = { photo ->
+                    // Trigger search by image using the existing ViewModel logic
+                    searchViewModel.startSearch(photo.uri)
+                }
             )
         }
     }
 }
-
-
