@@ -5,6 +5,7 @@ import me.grey.picquery.data.model.Embedding
 
 @Dao
 interface EmbeddingDao {
+
     companion object {
         private const val tableName = "embedding"
     }
@@ -25,6 +26,19 @@ interface EmbeddingDao {
         "SELECT * FROM $tableName WHERE album_id IS (:albumId)"
     )
     fun getAllByAlbumId(albumId: Long): List<Embedding>
+
+    /**
+     * Lightweight projection used to compute the "resume point" of an
+     * interrupted indexing job: returns only the ids of photos that
+     * already have an embedding in the given album, without loading
+     * any embedding BLOB into memory.
+     *
+     * NOTE: query-only addition, the DB schema is untouched.
+     */
+    @Query(
+        "SELECT photo_id FROM $tableName WHERE album_id IS (:albumId)"
+    )
+    fun getPhotoIdsByAlbumId(albumId: Long): List<Long>
 
     @Query(
         "SELECT * FROM $tableName WHERE album_id IN (:albumIds)"

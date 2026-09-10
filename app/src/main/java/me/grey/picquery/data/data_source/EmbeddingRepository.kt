@@ -21,7 +21,6 @@ class EmbeddingRepository(
     fun getAllEmbeddingsPaginated(pageSize: Int): Flow<List<Embedding>> = flow {
         var offset = 0
         var hasMore = true
-
         while (hasMore) {
             val embeddings = dataSource.getEmbeddingsPaginated(pageSize, offset)
             if (embeddings.isEmpty()) {
@@ -43,6 +42,15 @@ class EmbeddingRepository(
 
     fun getByAlbumId(albumId: Long): List<Embedding> {
         return dataSource.getAllByAlbumId(albumId)
+    }
+
+    /**
+     * Ids of photos that already have an embedding in this album.
+     * Used to skip already-indexed photos so an interrupted indexing
+     * job resumes exactly where it left off.
+     */
+    fun getEncodedPhotoIds(albumId: Long): List<Long> {
+        return dataSource.getPhotoIdsByAlbumId(albumId)
     }
 
     fun getByAlbumList(albumList: List<Album>): List<Embedding> {
@@ -84,6 +92,7 @@ class EmbeddingRepository(
     }
 
     private val cacheLinkedBlockingDeque = LinkedBlockingDeque<Embedding>()
+
     fun updateAll(list: List<Embedding>) {
         return dataSource.upsertAll(list)
     }
