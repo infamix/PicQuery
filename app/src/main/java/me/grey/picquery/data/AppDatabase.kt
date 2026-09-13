@@ -42,14 +42,14 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 // No schema changes
             }
         }
 
         private val MIGRATION_3_4 = object : Migration(3, 4) {
-            override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("""
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS image_similarity (
                         photo_id INTEGER PRIMARY KEY NOT NULL,
                         similarity_score REAL NOT NULL
