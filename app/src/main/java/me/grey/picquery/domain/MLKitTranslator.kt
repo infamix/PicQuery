@@ -1,3 +1,4 @@
+// FILE: app/src/main/java/me/grey/picquery/domain/MLKitTranslator.kt
 package me.grey.picquery.domain
 
 import android.content.Context
@@ -6,9 +7,12 @@ import com.google.android.gms.tasks.Task
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
+import kotlinx.coroutines.suspendCancellableCoroutine
 import me.grey.picquery.PicQueryApplication
 import me.grey.picquery.common.AssetUtil
 import java.io.File
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class MLKitTranslator {
 
@@ -42,7 +46,6 @@ class MLKitTranslator {
         )
     }
 
-
     suspend fun translate(
         text: String,
         onSuccess: (String) -> Unit,
@@ -53,15 +56,20 @@ class MLKitTranslator {
         }
         return englishChineseTranslator.translate(text)
             .addOnSuccessListener { translatedText ->
-                // Translation successful.
                 onSuccess(translatedText)
                 Log.i(TAG, "$text 翻译为: $translatedText")
             }
             .addOnFailureListener { exception ->
-                // Error.
                 onError(exception)
                 Log.e(TAG, "翻译错误")
-                // ...
             }
+    }
+
+    suspend fun translateSuspend(text: String): String = suspendCancellableCoroutine { cont ->
+        translate(
+            text,
+            onSuccess = { translated -> cont.resume(translated) },
+            onError = { e -> cont.resumeWithException(e) }
+        )
     }
 }

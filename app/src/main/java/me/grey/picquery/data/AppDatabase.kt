@@ -1,3 +1,4 @@
+// FILE: app/src/main/java/me/grey/picquery/data/AppDatabase.kt
 package me.grey.picquery.data
 
 import android.content.Context
@@ -40,23 +41,20 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // Define the migration from version 2 to version 3
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(database: SupportSQLiteDatabase) {
-                // Perform necessary schema changes here
-                // For example, adding a new column:
-                // database.execSQL("ALTER TABLE table_name ADD COLUMN new_column_name INTEGER NOT NULL DEFAULT 0")
+                // No schema changes
             }
         }
 
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("CREATE TABLE IF NOT EXISTS image_similarity (\n" +
-                        "    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,\n" +
-                        "    base_photo_id INTEGER NOT NULL,\n" +
-                        "    compared_photo_id INTEGER NOT NULL,\n" +
-                        "    similarity_score REAL NOT NULL\n" +
-                        ");");
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS image_similarity (
+                        photo_id INTEGER PRIMARY KEY NOT NULL,
+                        similarity_score REAL NOT NULL
+                    );
+                """.trimIndent())
             }
         }
     }

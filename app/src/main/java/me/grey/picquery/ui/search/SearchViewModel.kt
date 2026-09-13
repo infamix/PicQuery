@@ -1,3 +1,4 @@
+// FILE: app/src/main/java/me/grey/picquery/ui/search/SearchViewModel.kt
 package me.grey.picquery.ui.search
 
 import android.content.Context
@@ -5,7 +6,9 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import me.grey.picquery.PicQueryApplication
 import me.grey.picquery.R
@@ -20,13 +24,14 @@ import me.grey.picquery.common.showToast
 import me.grey.picquery.data.data_source.PhotoRepository
 import me.grey.picquery.data.model.Photo
 import me.grey.picquery.domain.ImageSearcher
+import timber.log.Timber
 
 enum class SearchState {
-    NO_INDEX, // 没有索引
-    LOADING, // 初始化加载模型中
-    READY,  // 准备好搜索
-    SEARCHING,  // 正在搜索
-    FINISHED,  // 搜索已完成
+    NO_INDEX,
+    LOADING,
+    READY,
+    SEARCHING,
+    FINISHED,
 }
 
 class SearchViewModel(
@@ -53,10 +58,10 @@ class SearchViewModel(
         ""
     )
 
+    private var searchJob: Job? = null
+
     private val context: Context
-        get() {
-            return PicQueryApplication.context
-        }
+        get() = PicQueryApplication.context
 
     init {
         Log.d(TAG, "init!!! SearchViewModel")
@@ -74,34 +79,48 @@ class SearchViewModel(
             return
         }
         _searchText.value = text
-        viewModelScope.launch(ioDispatcher) {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch(ioDispatcher) {
             _searchState.value = SearchState.SEARCHING
-            imageSearcher.search(text) { entries ->
+            try {
+                val entries = imageSearcher.searchText(text)
                 if (entries.isNotEmpty()) {
                     val ids = entries.map { it.value }
                     val photos = repo.getPhotoListByIds(ids)
                     _resultMap.update {
                         entries.associate { it.value to it.key }.toMutableMap()
                     }
-                    // reorder by id
                     _resultList.value = reOrderList(photos, ids)
+                } else {
+                    _resultList.value = emptyList()
+                    _resultMap.value = emptyMap()
                 }
-                _searchState.value = SearchState.FINISHED
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Search failed")
+                _resultList.value = emptyList()
+                _resultMap.value = emptyMap()
+            } finally {
+                if (isActive) {
+                    _searchState.value = SearchState.FINISHED
+                }
             }
         }
     }
 
     fun startSearch(uri: Uri) {
-        // 从 uri 获取图片
-        val photo = repo.getBitmapFromUri(uri)
-        if (photo == null) {
+        val bitmap = repo.getBitmapFromUri(uri)
+        if (bitmap == null) {
             showToast(context.getString(R.string.empty_search_content_toast))
             Log.w(TAG, "搜索字段为空")
             return
         }
-        viewModelScope.launch(ioDispatcher) {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch(ioDispatcher) {
             _searchState.value = SearchState.SEARCHING
-            imageSearcher.searchWithRange(photo) { entries ->
+            try {
+                val entries = imageSearcher.searchImage(bitmap)
                 if (entries.isNotEmpty()) {
                     val ids = entries.map { it.value }
                     val photos = repo.getPhotoListByIds(ids)
@@ -109,13 +128,24 @@ class SearchViewModel(
                         entries.associate { it.value to it.key }.toMutableMap()
                     }
                     _resultList.value = reOrderList(photos, ids)
+                } else {
+                    _resultList.value = emptyList()
+                    _resultMap.value = emptyMap()
                 }
-                _searchState.value = SearchState.FINISHED
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Image search failed")
+                _resultList.value = emptyList()
+                _resultMap.value = emptyMap()
+            } finally {
+                if (isActive) {
+                    _searchState.value = SearchState.FINISHED
+                }
             }
         }
     }
 
-    // fix the order of the result list
     private fun reOrderList(originalList: List<Photo>, orderList: List<Long>): List<Photo> {
         val photoMap = originalList.associateBy { it.id }
         return orderList.mapNotNull { id -> photoMap[id] }
