@@ -9,7 +9,6 @@ import me.grey.picquery.data.data_source.PhotoRepository
 import me.grey.picquery.data.data_source.PreferenceRepository
 import me.grey.picquery.domain.AlbumManager
 import me.grey.picquery.domain.ImageSearcher
-import me.grey.picquery.domain.MLKitTranslator
 import me.grey.picquery.domain.SimilarityManager
 import me.grey.picquery.feature.clip.modulesCLIP
 import me.grey.picquery.ui.display.DisplayViewModel
@@ -60,7 +59,6 @@ private val domainModules = module {
             imageEncoder = get(),
             textEncoder = get(),
             embeddingRepository = get(),
-            translator = MLKitTranslator(),
             dispatcher = get()
         )
     }
@@ -74,8 +72,6 @@ private val domainModules = module {
         )
     }
 
-    single { MLKitTranslator() }
-
     single { SimilarityManager(get(),get()) }
 }
 
@@ -85,4 +81,3 @@ val workManagerModule = module {
 
 // need inject encoder here
 val AppModules = listOf(dispatchersKoinModule, viewModelModules, dataModules, modulesCLIP, domainModules, workManagerModule)
-

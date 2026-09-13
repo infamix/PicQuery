@@ -53,7 +53,6 @@ class ImageSearcher(
     private val imageEncoder: ImageEncoder,
     private val textEncoder: TextEncoder,
     private val embeddingRepository: EmbeddingRepository,
-    private val translator: MLKitTranslator,
     private val dispatcher: CoroutineDispatcher
 ) {
     companion object {
@@ -174,13 +173,7 @@ class ImageSearcher(
         text: String,
         range: List<Album> = searchRange
     ): MutableSet<MutableMap.MutableEntry<Double, Long>> {
-        return try {
-            val translated = translator.translateSuspend(text)
-            searchWithRange(translated, range)
-        } catch (e: Exception) {
-            Timber.tag("MLTranslator").e(e, "Translation failed, fallback to original")
-            searchWithRange(text, range)
-        }
+        return searchWithRange(text, range)
     }
 
     suspend fun searchImage(
