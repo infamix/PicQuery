@@ -65,11 +65,20 @@ class MLKitTranslator {
             }
     }
 
-    suspend fun translateSuspend(text: String): String = suspendCancellableCoroutine { cont ->
-        translate(
-            text,
-            onSuccess = { translated -> cont.resume(translated) },
-            onError = { e -> cont.resumeWithException(e) }
-        )
+    suspend fun translateSuspend(text: String): String {
+        if (shouldCopyModel) {
+            copyModelsFromAssets()
+        }
+        return suspendCancellableCoroutine { cont ->
+            englishChineseTranslator.translate(text)
+                .addOnSuccessListener { translatedText ->
+                    Log.i(TAG, "$text 翻译为: $translatedText")
+                    if (cont.isActive) cont.resume(translatedText)
+                }
+                .addOnFailureListener { exception ->
+                    Log.e(TAG, "翻译错误")
+                    if (cont.isActive) cont.resumeWithException(exception)
+                }
+        }
     }
 }

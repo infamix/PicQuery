@@ -40,7 +40,6 @@ import me.grey.picquery.domain.EmbeddingUtils.saveBitmapsToEmbedding
 import me.grey.picquery.feature.base.ImageEncoder
 import me.grey.picquery.feature.base.TextEncoder
 import timber.log.Timber
-import java.util.Collections
 import java.util.TreeSet
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.system.measureTimeMillis
@@ -75,6 +74,8 @@ class ImageSearcher(
 
     private val _topK = mutableIntStateOf(DEFAULT_TOP_K)
     val topK: State<Int> = _topK
+
+    private val resultLock = Any()
 
     fun updateRange(range: List<Album>, searchAll: Boolean) {
         searchRange.clear()
@@ -169,7 +170,10 @@ class ImageSearcher(
         return true
     }
 
-    suspend fun searchText(text: String, range: List<Album> = searchRange): MutableSet<MutableMap.MutableEntry<Double, Long>> {
+    suspend fun searchText(
+        text: String,
+        range: List<Album> = searchRange
+    ): MutableSet<MutableMap.MutableEntry<Double, Long>> {
         return try {
             val translated = translator.translateSuspend(text)
             searchWithRange(translated, range)
@@ -179,7 +183,10 @@ class ImageSearcher(
         }
     }
 
-    suspend fun searchImage(image: Bitmap, range: List<Album> = searchRange): MutableSet<MutableMap.MutableEntry<Double, Long>> {
+    suspend fun searchImage(
+        image: Bitmap,
+        range: List<Album> = searchRange
+    ): MutableSet<MutableMap.MutableEntry<Double, Long>> {
         return searchWithRange(image, range)
     }
 
@@ -219,11 +226,9 @@ class ImageSearcher(
         range: List<Album>,
         queryFeat: FloatArray
     ): MutableSet<MutableMap.MutableEntry<Double, Long>> {
-        val threadSafeSortedSet = Collections.synchronizedSortedSet(
-            TreeSet<SimilarityEntry>(
-                compareByDescending<SimilarityEntry> { it.score }
-                    .thenByDescending { it.photoId }
-            )
+        val sortedSet = TreeSet<SimilarityEntry>(
+            compareByDescending<SimilarityEntry> { it.score }
+                .thenByDescending { it.photoId }
         )
 
         val embeddings = if (range.isEmpty() || isSearchAll.value) {
@@ -234,6 +239,7 @@ class ImageSearcher(
             embeddingRepository.getEmbeddingsByAlbumIdsPaginated(range.map { it.id }, SEARCH_BATCH_SIZE)
         }
 
+        val maxResults = topK.value
         var totalProcessed = 0
         embeddings.collect { chunk ->
             Timber.tag(TAG).d("Processing chunk: ${chunk.size}")
@@ -243,10 +249,10 @@ class ImageSearcher(
                 val sim = calculateSimilarity(emb.data.toFloatArray(), queryFeat)
                 if (sim >= matchThreshold.value) {
                     val entry = SimilarityEntry(sim, emb.photoId)
-                    synchronized(threadSafeSortedSet) {
-                        threadSafeSortedSet.add(entry)
-                        if (threadSafeSortedSet.size > topK.value) {
-                            threadSafeSortedSet.pollLast()
+                    synchronized(resultLock) {
+                        sortedSet.add(entry)
+                        while (sortedSet.size > maxResults) {
+                            sortedSet.pollLast()
                         }
                     }
                 }
@@ -254,12 +260,12 @@ class ImageSearcher(
         }
 
         Timber.tag(TAG).d("Search Finish: Processed $totalProcessed embeddings")
-        Timber.tag(TAG).d("Search result: found ${threadSafeSortedSet.size} pics")
+        Timber.tag(TAG).d("Search result: found ${sortedSet.size} pics")
 
         searchResultIds.clear()
         val result = mutableSetOf<MutableMap.MutableEntry<Double, Long>>()
-        synchronized(threadSafeSortedSet) {
-            for (entry in threadSafeSortedSet) {
+        synchronized(resultLock) {
+            for (entry in sortedSet) {
                 result.add(entry)
                 searchResultIds.add(entry.photoId)
             }
