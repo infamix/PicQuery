@@ -26,10 +26,11 @@ open class ImageEncoderONNX(
     private val TAG = this::class.java.simpleName
 
     // Global, process-wide ORT environment. Do NOT close it per-encode.
-    private val ortEnv: OrtEnvironment = OrtEnvironment.getEnvironment()
+    // `protected` so subclasses (e.g. ImageEncoderCLIP) can reuse it.
+    protected val ortEnv: OrtEnvironment = OrtEnvironment.getEnvironment()
 
     @Volatile
-    private var ortSession: OrtSession? = null
+    protected var ortSession: OrtSession? = null
 
     init {
         val options = OrtSession.SessionOptions().apply {
