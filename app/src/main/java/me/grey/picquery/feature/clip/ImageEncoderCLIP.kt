@@ -1,49 +1,109 @@
-// FILE: app/src/main/java/me/grey/picquery/feature/clip/ImageEncoderCLIP.kt
+// FILE: app/src/main/java/me/grey/picquery/feature/clip/PreprocessorCLIP.kt
 package me.grey.picquery.feature.clip
 
-import ai.onnxruntime.OnnxTensor
-import android.content.Context
 import android.graphics.Bitmap
-import kotlinx.coroutines.CoroutineDispatcher
-import me.grey.picquery.feature.ImageEncoderONNX
-import java.util.Collections
+import android.graphics.Canvas
+import android.graphics.Matrix
+import me.grey.picquery.feature.base.Preprocessor
+import java.nio.FloatBuffer
 
-class ImageEncoderCLIP(
-    context: Context,
-    private val preprocessor: PreprocessorCLIP,
-    private val dispatcher: CoroutineDispatcher
-) : ImageEncoderONNX(
-    224, "clip-image-int8.ort", context, preprocessor, dispatcher
-) {
+class PreprocessorCLIP : Preprocessor {
 
     companion object {
         const val INPUT = 224
+        private const val CHANNELS = 3
+        private val NORM_MEAN = floatArrayOf(0.48145467f, 0.4578275f, 0.40821072f)
+        private val NORM_STD = floatArrayOf(0.26862955f, 0.2613026f, 0.2757771f)
+    }
+
+    // Reuse a single padded bitmap + Canvas per thread. This avoids an
+    // ARGB_8888 allocation of INPUT x INPUT per image, which adds up
+    // quickly when encoding batches of photos. ThreadLocal keeps the
+    // reuse safe even though PreprocessorCLIP is a Koin singleton.
+    //
+    // The explicit `ThreadLocal<...>` type on the property is required:
+    // `ThreadLocal.withInitial { ... }` infers its generic parameter from
+    // the lambda's return type. `Bitmap.createBitmap` returns a Java
+    // platform type (`Bitmap!`), which Kotlin resolves to `Bitmap?` under
+    // inference, producing a `ThreadLocal<Bitmap?>` and cascading nullable
+    // warnings through every `.get()` call site.
+    private val paddedBitmapLocal: ThreadLocal<Bitmap> = ThreadLocal.withInitial {
+        Bitmap.createBitmap(INPUT, INPUT, Bitmap.Config.ARGB_8888)
+    }
+
+    private val canvasLocal: ThreadLocal<Canvas> = ThreadLocal.withInitial {
+        Canvas(paddedBitmapLocal.get())
+    }
+
+    override suspend fun preprocessBatch(input: List<Bitmap>): FloatBuffer {
+        return bitmapsToFloatBuffer(input)
+    }
+
+    override suspend fun preprocess(input: Bitmap): FloatBuffer {
+        return bitmapToFloatBuffer(input)
     }
 
     /**
-     * Per-image encoding: avoids the batch FloatBuffer copy + split that used
-     * to double-allocate the input buffer. Each image is preprocessed into a
-     * single FloatBuffer and consumed directly.
+     * Resize preserving aspect ratio so the LONGER side becomes INPUT, then
+     * center-pad with black to a square INPUT x INPUT canvas. No cropping.
      */
-    override suspend fun encodeBatch(bitmaps: List<Bitmap>): List<FloatArray> {
-        if (bitmaps.isEmpty()) return emptyList()
+    fun bitmapToFloatBuffer(bm: Bitmap): FloatBuffer {
+        val width = bm.width
+        val height = bm.height
 
-        val session = ortSession
-            ?: throw IllegalStateException("ORT session is not initialized")
-        val inputName = session.inputNames.iterator().next()
-        val shape = longArrayOf(1, 3, INPUT.toLong(), INPUT.toLong())
-
-        val res = ArrayList<FloatArray>(bitmaps.size)
-        for (bitmap in bitmaps) {
-            val buffer = preprocessor.preprocess(bitmap) as java.nio.FloatBuffer
-            OnnxTensor.createTensor(ortEnv, buffer, shape).use { tensor ->
-                session.run(Collections.singletonMap(inputName, tensor)).use { output ->
-                    @Suppress("UNCHECKED_CAST")
-                    val rawOutput = ((output.get(0).value) as Array<FloatArray>)[0]
-                    res.add(rawOutput)
-                }
-            }
+        val scale = if (width >= height) {
+            INPUT.toFloat() / width
+        } else {
+            INPUT.toFloat() / height
         }
-        return res
+        val newWidth = (width * scale).toInt()
+        val newHeight = (height * scale).toInt()
+
+        val paddedBitmap = paddedBitmapLocal.get()
+        val canvas = canvasLocal.get()
+
+        // Clear the reused bitmap before drawing.
+        canvas.drawARGB(255, 0, 0, 0)
+
+        val matrix = Matrix().apply {
+            setScale(scale, scale)
+            postTranslate((INPUT - newWidth) / 2f, (INPUT - newHeight) / 2f)
+        }
+        canvas.drawBitmap(bm, matrix, null)
+
+        val pixels = IntArray(INPUT * INPUT)
+        paddedBitmap.getPixels(pixels, 0, INPUT, 0, 0, INPUT, INPUT)
+
+        val totalPixels = INPUT * INPUT
+        val imgData = FloatBuffer.allocate(CHANNELS * totalPixels)
+
+        for (i in 0 until totalPixels) {
+            val pixel = pixels[i]
+            val r = ((pixel shr 16) and 0xFF) / 255f
+            val g = ((pixel shr 8) and 0xFF) / 255f
+            val b = (pixel and 0xFF) / 255f
+
+            imgData.put(i, (r - NORM_MEAN[0]) / NORM_STD[0])
+            imgData.put(i + totalPixels, (g - NORM_MEAN[1]) / NORM_STD[1])
+            imgData.put(i + totalPixels * 2, (b - NORM_MEAN[2]) / NORM_STD[2])
+        }
+
+        imgData.rewind()
+        // Intentionally not recycling paddedBitmap: it's thread-local.
+        return imgData
+    }
+
+    fun bitmapsToFloatBuffer(bitmaps: List<Bitmap>): FloatBuffer {
+        if (bitmaps.isEmpty()) return FloatBuffer.allocate(0)
+        val totalSize = bitmaps.size * CHANNELS * INPUT * INPUT
+        val combinedBuffer = FloatBuffer.allocate(totalSize)
+
+        for (bitmap in bitmaps) {
+            val floatBuffer = bitmapToFloatBuffer(bitmap)
+            combinedBuffer.put(floatBuffer)
+        }
+
+        combinedBuffer.flip()
+        return combinedBuffer
     }
 }

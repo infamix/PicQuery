@@ -20,11 +20,18 @@ class PreprocessorCLIP : Preprocessor {
     // ARGB_8888 allocation of INPUT x INPUT per image, which adds up
     // quickly when encoding batches of photos. ThreadLocal keeps the
     // reuse safe even though PreprocessorCLIP is a Koin singleton.
-    private val paddedBitmapLocal = ThreadLocal.withInitial {
+    //
+    // The explicit `ThreadLocal<...>` type on the property is required:
+    // `ThreadLocal.withInitial { ... }` infers its generic parameter from
+    // the lambda's return type. `Bitmap.createBitmap` returns a Java
+    // platform type (`Bitmap!`), which Kotlin resolves to `Bitmap?` under
+    // inference, producing a `ThreadLocal<Bitmap?>` and cascading nullable
+    // warnings through every `.get()` call site.
+    private val paddedBitmapLocal: ThreadLocal<Bitmap> = ThreadLocal.withInitial {
         Bitmap.createBitmap(INPUT, INPUT, Bitmap.Config.ARGB_8888)
     }
 
-    private val canvasLocal = ThreadLocal.withInitial {
+    private val canvasLocal: ThreadLocal<Canvas> = ThreadLocal.withInitial {
         Canvas(paddedBitmapLocal.get())
     }
 
