@@ -41,6 +41,8 @@ class PreprocessorMobileCLIP : Preprocessor {
         }
 
         imgData.rewind()
+        // Recycle the intermediate scaled bitmap; the caller still owns `bm`.
+        bitmap.recycle()
         return imgData
     }
 

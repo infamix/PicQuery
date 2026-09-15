@@ -58,7 +58,7 @@ class BPETokenizer(context: Context, bpePath: String = "bpe_vocab_gz"): Tokenize
         private const val START_TOKEN = "<|startoftext|>"
         private const val END_TOKEN = "<|endoftext|>"
         private const val WORD_END = "</w>"
-        
+
         private val PATTERN = Pattern.compile(
             "$START_TOKEN|$END_TOKEN|'s|'t|'re|'ve|'m|'ll|'d|[\\p{L}]+|[\\p{N}]|[^\\s\\p{L}\\p{N}]+",
         )
@@ -92,49 +92,49 @@ class BPETokenizer(context: Context, bpePath: String = "bpe_vocab_gz"): Tokenize
             .map { it.value to it.key }.toMap()
         bpeRanks = merges.mapIndexed { index, pair -> pair to index }.toMap()
         cache = mutableMapOf(
-            START_TOKEN to START_TOKEN, 
+            START_TOKEN to START_TOKEN,
             END_TOKEN to END_TOKEN
         )
     }
 
-private fun bpe(token: String): String {
-    cache[token]?.let { return it }
+    private fun bpe(token: String): String {
+        cache[token]?.let { return it }
 
-    var word = token.dropLast(1).map { it.toString() }.toMutableList().apply {
-        add(token.last().toString() + WORD_END)
-    }
-    var pairs = getPairs(word)
-
-    if (pairs.isEmpty()) return "$token$WORD_END"
-
-    while (true) {
-        val bigram = pairs.minByOrNull { bpeRanks[it] ?: Int.MAX_VALUE } ?: break
-        if (bigram !in bpeRanks) break
-
-        val (first, second) = bigram
-        val newWord = mutableListOf<String>()
-        var i = 0
-
-        while (i < word.size) {
-            val j = word.subList(i, word.size).indexOf(first).takeIf { it != -1 }?.plus(i) ?: word.size
-            newWord.addAll(word.subList(i, j))
-            i = j
-
-            if (i < word.size - 1 && word[i] == first && word[i + 1] == second) {
-                newWord.add(first + second)
-                i += 2
-            } else if (i < word.size) {
-                newWord.add(word[i])
-                i++
-            }
+        var word = token.dropLast(1).map { it.toString() }.toMutableList().apply {
+            add(token.last().toString() + WORD_END)
         }
-        word = newWord
-        if (word.size == 1) break
-        pairs = getPairs(word)
-    }
+        var pairs = getPairs(word)
 
-    return word.joinToString(" ").also { cache[token] = it }
-}
+        if (pairs.isEmpty()) return "$token$WORD_END"
+
+        while (true) {
+            val bigram = pairs.minByOrNull { bpeRanks[it] ?: Int.MAX_VALUE } ?: break
+            if (bigram !in bpeRanks) break
+
+            val (first, second) = bigram
+            val newWord = mutableListOf<String>()
+            var i = 0
+
+            while (i < word.size) {
+                val j = word.subList(i, word.size).indexOf(first).takeIf { it != -1 }?.plus(i) ?: word.size
+                newWord.addAll(word.subList(i, j))
+                i = j
+
+                if (i < word.size - 1 && word[i] == first && word[i + 1] == second) {
+                    newWord.add(first + second)
+                    i += 2
+                } else if (i < word.size) {
+                    newWord.add(word[i])
+                    i++
+                }
+            }
+            word = newWord
+            if (word.size == 1) break
+            pairs = getPairs(word)
+        }
+
+        return word.joinToString(" ").also { cache[token] = it }
+    }
 
     private fun encode(text: String): List<Int> {
         val cleanedText = whitespaceClean(text).lowercase()
@@ -151,7 +151,14 @@ private fun bpe(token: String): String {
 
 //        return bpe_tokens
         for (token in matches) {
-            val encodedToken = token.toByteArray().map { byteEncoder[it.toInt()] }.joinToString("")
+            // Mask with 0xFF so UTF-8 bytes > 0x7F are treated as unsigned
+            // indices into the byte encoder. Without the mask, `Byte.toInt()`
+            // sign-extends and produces negative keys, yielding "null" tokens
+            // for every non-ASCII byte (Chinese, Japanese, emoji, accented
+            // Latin, etc.).
+            val encodedToken = token.toByteArray()
+                .map { byteEncoder[it.toInt() and 0xFF] }
+                .joinToString("")
             for (bpeToken in bpe(encodedToken).split(" ")) {
                 bpeTokens.add(encoder.getValue(bpeToken))
             }
@@ -173,6 +180,10 @@ private fun bpe(token: String): String {
 
         if (tokens.size > contextLength) {
             if (truncate) {
+                // `subList` returns a *view*, so writing through it mutates
+                // the underlying list. Replacing the last in-range element
+                // with EOT and then building `result` from the first
+                // `contextLength` entries yields the correct truncated ids.
                 val truncatedTokens = tokens.subList(0, contextLength)
                 truncatedTokens[contextLength - 1] = eotToken
             } else {

@@ -43,6 +43,23 @@ class AlbumManager(
 
     val indexingAlbumState = mutableStateOf(IndexingAlbumState())
 
+    // Guards all read-modify-write updates to indexingAlbumState. The state
+    // is written from both the manager coroutine (IO) and the UI (main),
+    // so an unsynchronized `value = value.copy(...)` can lose an update.
+    private val indexingStateLock = Any()
+
+    private fun setIndexingState(newState: IndexingAlbumState) {
+        synchronized(indexingStateLock) {
+            indexingAlbumState.value = newState
+        }
+    }
+
+    private fun updateIndexingState(transform: (IndexingAlbumState) -> IndexingAlbumState) {
+        synchronized(indexingStateLock) {
+            indexingAlbumState.value = transform(indexingAlbumState.value)
+        }
+    }
+
     /**
      * True whenever ANY encoding job (foreground UI-driven or background worker)
      * is in progress. Used to prevent concurrent encoders from colliding.
@@ -170,8 +187,7 @@ class AlbumManager(
             return
         }
 
-        indexingAlbumState.value =
-            IndexingAlbumState(status = IndexingAlbumState.Status.Loading)
+        setIndexingState(IndexingAlbumState(status = IndexingAlbumState.Status.Loading))
         try {
             // 1. SAVE-FIRST: persist the album selection up front so that an
             //    interrupted run is resumable on the next app start.
@@ -187,22 +203,16 @@ class AlbumManager(
                 withContext(ioDispatcher) {
                     refreshAlbumMetadata(albums)
                 }
-                indexingAlbumState.value = indexingAlbumState.value.copy(
-                    status = IndexingAlbumState.Status.Finish
-                )
+                updateIndexingState { it.copy(status = IndexingAlbumState.Status.Finish) }
             } else {
                 // Not fatal: the albums are already saved, the background
                 // worker will resume the remaining photos on next app open.
                 Timber.tag(TAG).w("Encoding incomplete; it will resume on next app start.")
-                indexingAlbumState.value = indexingAlbumState.value.copy(
-                    status = IndexingAlbumState.Status.Error
-                )
+                updateIndexingState { it.copy(status = IndexingAlbumState.Status.Error) }
             }
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Error encoding albums")
-            indexingAlbumState.value = indexingAlbumState.value.copy(
-                status = IndexingAlbumState.Status.Error
-            )
+            updateIndexingState { it.copy(status = IndexingAlbumState.Status.Error) }
         }
     }
 
@@ -310,12 +320,14 @@ class AlbumManager(
                     val chunkSuccess = imageSearcher.encodePhotoListV2(pending) { cur, _, cost ->
                         processedPhotos.addAndGet(cur)
                         if (updateUiState) {
-                            indexingAlbumState.value = indexingAlbumState.value.copy(
-                                current = processedPhotos.get().coerceAtMost(totalPhotos),
-                                total = totalPhotos,
-                                cost = cost,
-                                status = IndexingAlbumState.Status.Indexing
-                            )
+                            updateIndexingState {
+                                it.copy(
+                                    current = processedPhotos.get().coerceAtMost(totalPhotos),
+                                    total = totalPhotos,
+                                    cost = cost,
+                                    status = IndexingAlbumState.Status.Indexing
+                                )
+                            }
                         }
                     }
                     if (!chunkSuccess) {
@@ -325,11 +337,13 @@ class AlbumManager(
                     }
                 } else if (updateUiState) {
                     // Pure resume/skip pass: still reflect progress in the UI.
-                    indexingAlbumState.value = indexingAlbumState.value.copy(
-                        current = processedPhotos.get().coerceAtMost(totalPhotos),
-                        total = totalPhotos,
-                        status = IndexingAlbumState.Status.Indexing
-                    )
+                    updateIndexingState {
+                        it.copy(
+                            current = processedPhotos.get().coerceAtMost(totalPhotos),
+                            total = totalPhotos,
+                            status = IndexingAlbumState.Status.Indexing
+                        )
+                    }
                 }
             }
         }
@@ -364,7 +378,7 @@ class AlbumManager(
     }
 
     fun clearIndexingState() {
-        indexingAlbumState.value = IndexingAlbumState()
+        setIndexingState(IndexingAlbumState())
     }
 
     fun removeSingleAlbumIndex(album: Album) {

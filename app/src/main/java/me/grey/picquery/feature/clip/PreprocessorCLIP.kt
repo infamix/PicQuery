@@ -16,6 +16,18 @@ class PreprocessorCLIP : Preprocessor {
         private val NORM_STD = floatArrayOf(0.26862955f, 0.2613026f, 0.2757771f)
     }
 
+    // Reuse a single padded bitmap + Canvas per thread. This avoids an
+    // ARGB_8888 allocation of INPUT x INPUT per image, which adds up
+    // quickly when encoding batches of photos. ThreadLocal keeps the
+    // reuse safe even though PreprocessorCLIP is a Koin singleton.
+    private val paddedBitmapLocal = ThreadLocal.withInitial {
+        Bitmap.createBitmap(INPUT, INPUT, Bitmap.Config.ARGB_8888)
+    }
+
+    private val canvasLocal = ThreadLocal.withInitial {
+        Canvas(paddedBitmapLocal.get())
+    }
+
     override suspend fun preprocessBatch(input: List<Bitmap>): FloatBuffer {
         return bitmapsToFloatBuffer(input)
     }
@@ -27,9 +39,6 @@ class PreprocessorCLIP : Preprocessor {
     /**
      * Resize preserving aspect ratio so the LONGER side becomes INPUT, then
      * center-pad with black to a square INPUT x INPUT canvas. No cropping.
-     *
-     * Uses a single output bitmap and a Matrix to scale directly onto the
-     * canvas — avoids the intermediate `createScaledBitmap` allocation.
      */
     fun bitmapToFloatBuffer(bm: Bitmap): FloatBuffer {
         val width = bm.width
@@ -43,8 +52,10 @@ class PreprocessorCLIP : Preprocessor {
         val newWidth = (width * scale).toInt()
         val newHeight = (height * scale).toInt()
 
-        val paddedBitmap = Bitmap.createBitmap(INPUT, INPUT, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(paddedBitmap)
+        val paddedBitmap = paddedBitmapLocal.get()
+        val canvas = canvasLocal.get()
+
+        // Clear the reused bitmap before drawing.
         canvas.drawARGB(255, 0, 0, 0)
 
         val matrix = Matrix().apply {
@@ -71,7 +82,7 @@ class PreprocessorCLIP : Preprocessor {
         }
 
         imgData.rewind()
-        paddedBitmap.recycle()
+        // Intentionally not recycling paddedBitmap: it's thread-local.
         return imgData
     }
 

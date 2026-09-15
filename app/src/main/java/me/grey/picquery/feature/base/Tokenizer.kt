@@ -2,7 +2,7 @@ package me.grey.picquery.feature.base
 
 abstract class Tokenizer(
     protected var contextLength: Int = 77,
-    protected var truncate: Boolean = false,
+    protected var truncate: Boolean = true,
 ) {
 
     abstract fun tokenize(

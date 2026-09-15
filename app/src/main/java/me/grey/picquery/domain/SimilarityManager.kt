@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.flatMapConcat
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import me.grey.picquery.common.calculateSimilarity
+import me.grey.picquery.common.dotProduct
 import me.grey.picquery.data.dao.ImageSimilarityDao
 import me.grey.picquery.data.data_source.EmbeddingRepository
 import me.grey.picquery.data.model.ImageSimilarity
@@ -94,15 +95,23 @@ class GroupSimilarPhotosUseCase(
     ): List<List<SimilarityNode>> {
 
         val embeddings = embeddingRepository.getByPhotoIds(photos.map { it.photoId }.toLongArray())
+        // SQL `IN (...)` does not guarantee result order, so index by id
+        // rather than relying on positional alignment with `photos`.
+        val embeddingMap: Map<Long, me.grey.picquery.data.model.Embedding> =
+            embeddings.associateBy { it.photoId }
 
         val unionFind = UnionFind(photos.size)
 
         for (i in photos.indices) {
+            val embI = embeddingMap[photos[i].photoId] ?: continue
             for (j in i + 1 until photos.size) {
+                val embJ = embeddingMap[photos[j].photoId] ?: continue
 
-                val similarity = calculateSimilarity(
-                    embeddings[i].data.toFloatArray(),
-                    embeddings[j].data.toFloatArray()
+                // Embeddings are stored L2-normalized, so dot product is
+                // equivalent to cosine similarity — and much cheaper.
+                val similarity = dotProduct(
+                    embI.data.toFloatArray(),
+                    embJ.data.toFloatArray()
                 )
 
                 if (similarity >= similarityThreshold.toDouble()) {
@@ -226,7 +235,7 @@ class SimilarityManager(
         newSimilarityThreshold?.let { similarityThreshold = it }
         newSimilarityDelta?.let { similarityDelta = it }
         newMinGroupSize?.let { minGroupSize = it }
-        
+
         // Recreate the use case with updated parameters
         groupSimilarPhotosUseCase = GroupSimilarPhotosUseCase(
             embeddingRepository,

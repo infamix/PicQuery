@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
 import kotlinx.coroutines.flow.flow
+import me.grey.picquery.common.calculateInSampleSize
 import me.grey.picquery.data.CursorUtil
 import me.grey.picquery.data.model.Photo
 import java.io.InputStream
@@ -20,6 +21,13 @@ class PhotoRepository(private val context: Context) {
     companion object {
         private const val TAG = "PhotoRepository"
         private const val DEFAULT_PAGE_SIZE = 500
+
+        /**
+         * Target size for externally-picked images used in image search.
+         * The encoder preprocessor will resize to DIM anyway, so anything
+         * substantially larger is wasted memory and CPU.
+         */
+        private const val IMAGE_SEARCH_TARGET = 512
     }
 
     private val imageProjection = arrayOf(
@@ -38,7 +46,7 @@ class PhotoRepository(private val context: Context) {
         )
 
     private fun getPhotoListByAlbumIdFlow(
-        albumId: Long, 
+        albumId: Long,
         pageSize: Int = DEFAULT_PAGE_SIZE
     ) = flow {
         var pageIndex = 0
@@ -55,7 +63,7 @@ class PhotoRepository(private val context: Context) {
     suspend fun getPhotoListByAlbumId(albumId: Long): List<Photo> {
         val result = mutableListOf<Photo>()
         getPhotoListByAlbumIdFlow(albumId).collect {
-                result.addAll(it)
+            result.addAll(it)
         }
 
         return result
@@ -132,6 +140,10 @@ class PhotoRepository(private val context: Context) {
     }
 
     fun getPhotoListByIds(ids: List<Long>): List<Photo> {
+        // `IN ()` is invalid SQL. An empty id list is a legitimate state
+        // (e.g. search returned no results before display is opened).
+        if (ids.isEmpty()) return emptyList()
+
         val query = context.contentResolver.query(
             imageCollection,
             imageProjection,
@@ -165,10 +177,24 @@ class PhotoRepository(private val context: Context) {
 
     fun getBitmapFromUri(uri: Uri): Bitmap? {
         return try {
-            // 打开输入流
-            val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-            // 解码输入流为 Bitmap
-            BitmapFactory.decodeStream(inputStream)
+            // Pass 1: read dimensions without allocating pixels.
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, bounds)
+            }
+
+            // Pass 2: decode with an inSampleSize that keeps the result
+            // near IMAGE_SEARCH_TARGET. This prevents a multi-hundred-MP
+            // picked image from OOM-ing the app before the encoder ever
+            // sees it.
+            bounds.inSampleSize = calculateInSampleSize(
+                bounds, IMAGE_SEARCH_TARGET, IMAGE_SEARCH_TARGET
+            )
+            bounds.inJustDecodeBounds = false
+
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, bounds)
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -182,7 +208,7 @@ class PhotoRepository(private val context: Context) {
      * @return Flow<List<Photo>> 照片列表流
      */
     fun getPhotoListByAlbumIdPaginated(
-        albumId: Long, 
+        albumId: Long,
         pageSize: Int = DEFAULT_PAGE_SIZE
     ) = flow {
         var pageIndex = 0

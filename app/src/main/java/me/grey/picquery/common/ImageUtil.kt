@@ -7,7 +7,6 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import android.util.Size
 import com.bumptech.glide.Glide
-import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.load.resource.bitmap.DownsampleStrategy
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.catch
@@ -59,13 +58,13 @@ suspend fun loadThumbnail(context: Context, photo: Photo, size: Size = IMAGE_INP
     }.catch {
         emit(
             coroutineScope {
+                // Fallback path: let Glide handle caching so re-indexing /
+                // resume passes don't have to re-decode from scratch.
                 Glide.with(context)
                     .asBitmap()
                     .load(photo.path)
-                    .diskCacheStrategy(DiskCacheStrategy.NONE)
                     .downsample(DownsampleStrategy.FIT_CENTER)
                     .override(DIM)
-                    .skipMemoryCache(true)
                     .submit().get()
             }
         )
