@@ -1,3 +1,4 @@
+// FILE: app/src/main/java/me/grey/picquery/feature/ImageEncoderONNX.kt
 package me.grey.picquery.feature
 
 import ai.onnxruntime.OnnxTensor
@@ -20,22 +21,29 @@ open class ImageEncoderONNX(
     context: Context,
     private val preprocessor: Preprocessor,
     private val dispatcher: CoroutineDispatcher
-) :
-    ImageEncoder {
+) : ImageEncoder {
 
     private val TAG = this::class.java.simpleName
 
-    var ortSession: OrtSession? = null
-    val ortEnv = OrtEnvironment.getEnvironment()
-    private var options = OrtSession.SessionOptions().apply {
-        addConfigEntry("session.load_model_format", "ORT")
-    }
+    // Global, process-wide ORT environment. Do NOT close it per-encode.
+    private val ortEnv: OrtEnvironment = OrtEnvironment.getEnvironment()
+
+    @Volatile
+    private var ortSession: OrtSession? = null
 
     init {
-        ortSession = ortEnv.createSession(
-            AssetUtil.assetFilePath(context, modelPath),
-            options
-        )
+        val options = OrtSession.SessionOptions().apply {
+            addConfigEntry("session.load_model_format", "ORT")
+        }
+        try {
+            ortSession = ortEnv.createSession(
+                AssetUtil.assetFilePath(context, modelPath),
+                options
+            )
+        } finally {
+            options.close()
+        }
+        Log.d(TAG, "Init $TAG")
     }
 
     fun clearSession() {
@@ -43,41 +51,41 @@ open class ImageEncoderONNX(
         ortSession = null
     }
 
-    init {
-        Log.d(TAG, "Init $TAG")
-    }
-
     override suspend fun encodeBatch(bitmaps: List<Bitmap>): List<FloatArray> =
         withContext(dispatcher) {
-            Log.d(TAG, "${this@ImageEncoderONNX} Start encoding image...")
+            if (bitmaps.isEmpty()) return@withContext emptyList()
+
+            val session = ortSession
+                ?: throw IllegalStateException("ORT session is not initialized")
 
             val floatBuffer = preprocessor.preprocessBatch(bitmaps) as FloatBuffer
 
-            val inputName = ortSession?.inputNames?.iterator()?.next()
+            val inputName = session.inputNames.iterator().next()
             val shape: LongArray = longArrayOf(bitmaps.size.toLong(), 3, dim, dim)
-            ortEnv.use { env ->
-                val tensor = OnnxTensor.createTensor(env, floatBuffer, shape)
-                val output: OrtSession.Result? =
-                    ortSession?.run(Collections.singletonMap(inputName, tensor))
-                val resultBuffer = output?.get(0) as OnnxTensor
-                Log.d(TAG, "Finish encoding image!")
 
-                val feat = resultBuffer.floatBuffer
-                val embeddingSize = 512
-                val numEmbeddings = feat.capacity() / embeddingSize
-                val embeddings = mutableListOf<FloatArray>()
+            OnnxTensor.createTensor(ortEnv, floatBuffer, shape).use { tensor ->
+                session.run(Collections.singletonMap(inputName, tensor)).use { output ->
+                    val outputTensor = output.get(0) as OnnxTensor
 
-                for (i in 0 until numEmbeddings) {
-                    val start = i * embeddingSize
-                    val embeddingArray = FloatArray(embeddingSize)
-                    feat.position(start)
-                    for (j in 0 until embeddingSize) {
-                        embeddingArray[j] = feat[start + j]
+                    // Derive embedding size and batch count from model output.
+                    val outputShape = outputTensor.info.shape
+                    val embeddingSize = outputShape.last().toInt()
+                    val numEmbeddings = outputShape
+                        .dropLast(1)
+                        .fold(1L) { acc, d -> acc * d }
+                        .toInt()
+
+                    val feat = outputTensor.floatBuffer
+                    val embeddings = ArrayList<FloatArray>(numEmbeddings)
+                    for (i in 0 until numEmbeddings) {
+                        val start = i * embeddingSize
+                        val embeddingArray = FloatArray(embeddingSize)
+                        feat.position(start)
+                        feat.get(embeddingArray, 0, embeddingSize)
+                        embeddings.add(embeddingArray)
                     }
-                    embeddings.add(embeddingArray)
+                    return@withContext embeddings
                 }
-
-                return@withContext embeddings
             }
         }
 }

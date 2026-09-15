@@ -1,4 +1,5 @@
 // FILE: app/src/main/java/me/grey/picquery/domain/ImageSearcher.kt
+// FILE: app/src/main/java/me/grey/picquery/domain/ImageSearcher.kt
 package me.grey.picquery.domain
 
 import android.graphics.Bitmap
@@ -27,10 +28,10 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.withContext
 import me.grey.picquery.PicQueryApplication.Companion.context
 import me.grey.picquery.R
-import me.grey.picquery.common.calculateSimilarity
+import me.grey.picquery.common.dotProduct
 import me.grey.picquery.common.encodeProgressCallback
+import me.grey.picquery.common.l2Normalize
 import me.grey.picquery.common.loadThumbnail
-import me.grey.picquery.common.showToast
 import me.grey.picquery.data.data_source.EmbeddingRepository
 import me.grey.picquery.data.model.Album
 import me.grey.picquery.data.model.Photo
@@ -191,7 +192,7 @@ class ImageSearcher(
             if (searchingLock) return@withContext mutableSetOf()
             searchingLock = true
             try {
-                val textFeat = textEncoder.encode(text)
+                val textFeat = l2Normalize(textEncoder.encode(text))
                 searchWithVector(range, textFeat)
             } finally {
                 searchingLock = false
@@ -208,7 +209,8 @@ class ImageSearcher(
             searchingLock = true
             try {
                 val bitmapFeats = imageEncoder.encodeBatch(mutableListOf(image))
-                searchWithVector(range, bitmapFeats[0])
+                val queryFeat = l2Normalize(bitmapFeats[0])
+                searchWithVector(range, queryFeat)
             } finally {
                 searchingLock = false
             }
@@ -239,7 +241,9 @@ class ImageSearcher(
             totalProcessed += chunk.size
 
             for (emb in chunk) {
-                val sim = calculateSimilarity(emb.data.toFloatArray(), queryFeat)
+                // Stored embeddings are L2-normalized, query is L2-normalized,
+                // so dot product == cosine similarity (much faster).
+                val sim = dotProduct(emb.data.toFloatArray(), queryFeat)
                 if (sim >= matchThreshold.value) {
                     val entry = SimilarityEntry(sim, emb.photoId)
                     synchronized(resultLock) {
